@@ -66,10 +66,9 @@ fn check_defined_symbols(wesl: &TranslationUnit, errors: &mut ErrorSinkRoot) {
     fn check_decl(decl: &GlobalDeclaration, mut errors: ErrorSink<'_>) {
         let decl_name = decl.ident().map(|ident| ident.name().to_string());
         for expr in Visit::<ExpressionNode>::visit(decl) {
-            check_expr(expr, errors.spanned(expr.span())).map_err(|mut d| {
-                d.detail.declaration = decl_name.clone();
-                d
-            });
+            let mut child_errors = errors.spanned(expr.span());
+            child_errors.declaration = decl_name.clone();
+            check_expr(expr, child_errors);
         }
 
         // those are the attributes that don't have an expression as parent.
@@ -80,10 +79,9 @@ fn check_defined_symbols(wesl: &TranslationUnit, errors: &mut ErrorSinkRoot) {
             GlobalDeclaration::Struct.members.[].ty,
             GlobalDeclaration::Function.{ parameters.[].ty, return_type.[] }
         }) {
-            check_ty(ty, errors.spanned(errors.span)).map_err(|mut d| {
-                d.detail.declaration = decl_name.clone();
-                d
-            });
+            let mut child_errors = errors.spanned(errors.span);
+            child_errors.declaration = decl_name.clone();
+            check_ty(ty, child_errors);
         }
     }
 

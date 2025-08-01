@@ -52,6 +52,7 @@ impl ErrorSinkRoot {
     pub fn spanned<'a>(&'a mut self, span: Span) -> ErrorSink<'a> {
         ErrorSink {
             span,
+            declaration: None,
             errors: &mut self.errors,
         }
     }
@@ -59,16 +60,22 @@ impl ErrorSinkRoot {
 
 pub struct ErrorSink<'source> {
     pub span: Span,
+    pub declaration: Option<String>,
     pub errors: &'source mut Vec<Diagnostic<Error>>,
 }
 
 impl<'source> ErrorSink<'source> {
     pub fn spanned<'a>(self: &'a mut Self, span: Span) -> ErrorSink<'a> {
         ErrorSink {
-            // <==== THIS SHOULD NOT BE SELF
             span,
+            declaration: None,
             errors: &mut self.errors,
         }
+    }
+    /// Provide the declaration in which the error originated.
+    pub fn with_declaration(mut self, decl: String) -> Self {
+        self.declaration = Some(decl);
+        self
     }
     pub fn push(&mut self, error: impl Into<Diagnostic<Error>>) {
         self.errors.push(error.into().with_span(self.span));
