@@ -41,6 +41,40 @@ pub enum Error {
     Custom(String),
 }
 
+#[derive(Default)]
+pub struct ErrorSinkRoot {
+    pub errors: Vec<Diagnostic<Error>>,
+}
+impl ErrorSinkRoot {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn spanned<'a>(&'a mut self, span: Span) -> ErrorSink<'a> {
+        ErrorSink {
+            span,
+            errors: &mut self.errors,
+        }
+    }
+}
+
+pub struct ErrorSink<'source> {
+    pub span: Span,
+    pub errors: &'source mut Vec<Diagnostic<Error>>,
+}
+
+impl<'source> ErrorSink<'source> {
+    pub fn spanned<'a>(self: &'a mut Self, span: Span) -> ErrorSink<'a> {
+        ErrorSink {
+            // <==== THIS SHOULD NOT BE SELF
+            span,
+            errors: &mut self.errors,
+        }
+    }
+    pub fn push(&mut self, error: impl Into<Diagnostic<Error>>) {
+        self.errors.push(error.into().with_span(self.span));
+    }
+}
+
 /// Error diagnostics. Display user-friendly error snippets with `Display`.
 ///
 /// A diagnostic is a wrapper around an error with extra contextual metata: the source,

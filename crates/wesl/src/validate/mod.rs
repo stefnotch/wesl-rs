@@ -8,6 +8,7 @@ use wgsl_parse::syntax::{
 };
 
 use crate::builtin::{BUILTIN_CONSTRUCTOR_NAMES, BUILTIN_FUNCTION_NAMES, builtin_ident};
+use crate::error::{ErrorSink, ErrorSinkRoot};
 use crate::visit::Visit;
 use crate::{Diagnostic, Error};
 
@@ -33,67 +34,62 @@ type E = ValidateError;
 /// * OR it is a built-in name
 ///
 /// Note that this function could be simplified if we didn't care about the diagnostics metadata (declaration and expression)
-fn check_defined_symbols(wesl: &TranslationUnit) -> Result<(), Diagnostic<Error>> {
-    fn check_ty(ty: &TypeExpression) -> Result<(), Diagnostic<Error>> {
+fn check_defined_symbols(wesl: &TranslationUnit, errors: &mut ErrorSinkRoot) {
+    fn check_ty(ty: &TypeExpression, mut errors: ErrorSink<'_>) {
         if ty.path.is_none()
             && ty.ident.use_count() == 1
             && builtin_ident(&ty.ident.name()).is_none()
             // `_` is only valid for phony assignments
             && *ty.ident.name() != "_"
         {
-            Err(E::UndefinedSymbol(ty.ident.to_string()).into())
+            errors.push(E::UndefinedSymbol(ty.ident.to_string()));
         } else {
             for arg in ty.template_args.iter().flatten() {
-                check_expr(&arg.expression)?;
+                check_expr(&arg.expression, errors.spanned(arg.expression.span()));
             }
-            Ok(())
         }
     }
-    fn check_expr(expr: &ExpressionNode) -> Result<(), Diagnostic<Error>> {
+    fn check_expr(expr: &ExpressionNode, mut errors: ErrorSink<'_>) {
         if let Expression::TypeOrIdentifier(ty) = expr.node() {
-            check_ty(ty).map_err(|d| d.with_span(expr.span()))
+            check_ty(ty, errors)
         } else if let Expression::FunctionCall(call) = expr.node() {
-            check_ty(&call.ty).map_err(|d| d.with_span(expr.span()))?;
+            check_ty(&call.ty, errors.spanned(expr.span()));
             for expr in &call.arguments {
-                check_expr(expr)?;
+                check_expr(expr, errors.spanned(expr.span()));
             }
-            Ok(())
         } else {
             for expr in Visit::<ExpressionNode>::visit(expr.node()) {
-                check_expr(expr)?;
+                check_expr(expr, errors.spanned(expr.span()));
             }
-            Ok(())
         }
     }
-    fn check_decl(decl: &GlobalDeclaration) -> Result<(), Diagnostic<Error>> {
+    fn check_decl(decl: &GlobalDeclaration, mut errors: ErrorSink<'_>) {
         let decl_name = decl.ident().map(|ident| ident.name().to_string());
         for expr in Visit::<ExpressionNode>::visit(decl) {
-            check_expr(expr).map_err(|mut d| {
+            check_expr(expr, errors.spanned(expr.span())).map_err(|mut d| {
                 d.detail.declaration = decl_name.clone();
                 d
-            })?;
+            });
         }
 
         // those are the attributes that don't have an expression as parent.
-        // unfortunately the diagnostic won't have a span :(
+        // these diagnostic get an overly large span :(
         for ty in query!(decl.{
             GlobalDeclaration::Declaration.ty.[],
             GlobalDeclaration::TypeAlias.ty,
             GlobalDeclaration::Struct.members.[].ty,
             GlobalDeclaration::Function.{ parameters.[].ty, return_type.[] }
         }) {
-            check_ty(ty).map_err(|mut d| {
+            check_ty(ty, errors.spanned(errors.span)).map_err(|mut d| {
                 d.detail.declaration = decl_name.clone();
                 d
-            })?;
+            });
         }
-        Ok(())
     }
 
     for decl in &wesl.global_declarations {
-        check_decl(decl)?;
+        check_decl(decl, errors.spanned(decl.span()));
     }
-    Ok(())
 }
 
 fn check_function_calls(wesl: &TranslationUnit) -> Result<(), Diagnostic<Error>> {
@@ -235,7 +231,8 @@ fn check_cycles(wesl: &TranslationUnit) -> Result<(), Diagnostic<Error>> {
 ///   (except for unresolved conditional compilation)
 /// * Cyclic declarations: no cycles are allowed in declarations.
 pub fn validate_wesl(wesl: &TranslationUnit) -> Result<(), Diagnostic<Error>> {
-    check_defined_symbols(wesl)?;
+    let mut errors = ErrorSinkRoot::new();
+    check_defined_symbols(wesl, &mut errors);
     check_duplicate_decl(wesl)?;
     check_cycles(wesl)?;
     Ok(())
@@ -250,9 +247,15 @@ pub fn validate_wesl(wesl: &TranslationUnit) -> Result<(), Diagnostic<Error>> {
 /// * Function calls: call expressions must refer to a function or a type constructor.
 ///   Check the number of arguments but not their type.
 pub fn validate_wgsl(wgsl: &TranslationUnit) -> Result<(), Diagnostic<Error>> {
-    check_defined_symbols(wgsl)?;
+    let mut errors = ErrorSinkRoot::new();
+    check_defined_symbols(wgsl, &mut errors);
     check_duplicate_decl(wgsl)?;
     check_cycles(wgsl)?;
     check_function_calls(wgsl)?;
-    Ok(())
+    // TODO: Report all errors
+    if let Some(err) = errors.errors.into_iter().next() {
+        Err(err)
+    } else {
+        Ok(())
+    }
 }
